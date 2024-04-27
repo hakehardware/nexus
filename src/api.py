@@ -78,6 +78,7 @@ class DatabaseAPI:
         self.conn.commit()
         self.disconnect()
 
+    # Unit Tests Built
     def insert_event(self, event) -> bool:
         try:
             self.connect()
@@ -95,13 +96,18 @@ class DatabaseAPI:
                 cursor.execute('INSERT INTO Events (event_datetime, event_type, event_data) VALUES (?, ?, ?)', (event_datetime, event_type, json.dumps(event_data)))
                 self.conn.commit()
 
-                return True
-            else:
-                return False
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error: {e}')
+            self.conn.rollback()
+            return False
 
         finally:
             self.disconnect()
 
+        return True
+
+    # Unit Tests Built
     def insert_farmer(self, data) -> bool:
         try:
             self.connect()
@@ -122,7 +128,8 @@ class DatabaseAPI:
                 cursor.execute("DELETE FROM farmer")
 
                 # Add a new row with the farmer_name
-                cursor.execute("INSERT INTO farmer (farmer_name) VALUES (?)", (farmer_name,))
+                current_datetime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+                cursor.execute("INSERT INTO farmer (farmer_name, creation_datetime) VALUES (?, ?)", (farmer_name, current_datetime))
 
             else:
                 logger.info(f'farmer {farmer_name} exists, no changes needed')
@@ -139,30 +146,43 @@ class DatabaseAPI:
             self.disconnect()
 
         return True
-    
+
+    # Unit Tests Built    
     def insert_farm(self, data) -> bool:
         try:
-            farm_id = data['Farm ID']
-            logger.info(f'checking to see if {farm_id} exists')
+            farm_id = data['Data']['Farm ID']
+            farm_index = data['Data']['Farm Index']
+            logger.info(f'checking to see if {farm_id} with index {farm_index} exists')
 
             self.connect()
             cursor = self.conn.cursor()
 
             self.conn.execute("BEGIN TRANSACTION")
 
-            # Check if a row with the given farm_id already exists
-            cursor.execute("SELECT COUNT(*) FROM farms WHERE farm_id = ?", (farm_id,))
-            row_count = cursor.fetchone()[0]
 
-            if row_count == 0:
-                logger.info(f'farm id {farm_id} does not exist. adding.')
 
-                # Add a new row with the farm_id
+            cursor.execute("SELECT * FROM farms WHERE farm_id = ? OR farm_index = ?", (farm_id, farm_index,))
+            rows = cursor.fetchall()
+
+            logger.info('match found, checking for conflicts')
+            insert = True
+            for row in rows:
+                existing_farm_id = row[0]
+                existing_farm_index = row[1]
+
+                if existing_farm_id == farm_id and existing_farm_index == farm_index:
+                    logger.info('complete match exists, no need to insert')
+                    insert = False
+                else:
+                    logger.info('conflict found, removing conflict')
+                    cursor.execute("DELETE FROM farms WHERE farm_id = ? AND farm_index = ?", (existing_farm_id, existing_farm_index))
+
+            if insert:
+                logger.info(f'inserting new farm with id of {farm_id} and index of {farm_index}')
                 current_datetime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-                cursor.execute("INSERT INTO farms (farm_id, creation_datetime) VALUES (?, ?)", (farm_id, current_datetime))
-
-            else:
-                logger.info(f'{farm_id} exists, no changes needed.')
+                cursor.execute("INSERT INTO farms (farm_id, farm_index, creation_datetime) VALUES (?, ?, ?)", (farm_id, farm_index, current_datetime))
+                        
+                    
 
             self.conn.commit()
 
@@ -176,7 +196,8 @@ class DatabaseAPI:
             self.disconnect()
 
         return True
-    
+
+    # Unit Tests Built
     def insert_reward(self, data) -> bool:
         try:
             self.connect()
@@ -206,6 +227,7 @@ class DatabaseAPI:
 
         return True
     
+    # Unit Tests Built
     def insert_plot(self, data) -> bool:
         try:
             self.connect()
@@ -243,6 +265,7 @@ class DatabaseAPI:
 
         return True
     
+    # Unit Tests Built
     def insert_error(self, data) -> bool:
         try:
             self.connect()
@@ -274,22 +297,61 @@ class DatabaseAPI:
 
         return True
     
-    def delete_farms(self, data) -> bool:
+    
+    def delete_farm(self, data) -> bool:
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            farm_index = data['Farm Index']
+            farm_id = data['Farm ID']
+            
+            # Construct the WHERE clause based on the provided parameters
+            if farm_index is not None and farm_id is not None:
+                where_clause = "farm_index = ? OR farm_id = ?"
+                params = (farm_index, farm_id)
+            elif farm_index is not None:
+                where_clause = "farm_index = ?"
+                params = (farm_index,)
+            elif farm_id is not None:
+                where_clause = "farm_id = ?"
+                params = (farm_id,)
+            else:
+                # If neither farm_index nor farm_id is provided, return False
+                logger.info('No params provided.')
+                return False
+            
+            # Construct and execute the DELETE statement
+            logger.info(f"DELETE FROM farms WHERE  {where_clause} {params}")
+            cursor.execute("DELETE FROM farms WHERE " + where_clause, params)
+            self.conn.commit()
+
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error: {e}')
+            self.conn.rollback()
+            return False
+
+        finally:
+            self.disconnect()
+
+        return True
+    
+    def delete_farms(self, farm_ids) -> bool:
         try:
             self.connect()
             cursor = self.conn.cursor()
             
-            logger.info(f'Cleaning farms table by removing any farm_ids not reported by metrics.')
-
-            cursor.execute("SELECT COUNT(*) FROM farms WHERE farm_id NOT IN ({})".format(
+            cursor.execute("SELECT COUNT(*) FROM farms WHERE farm_id IN ({})".format(
                 ','.join(['?'] * len(farm_ids))
             ), farm_ids)
 
             # Fetch the count of rows to be deleted
             rows_to_delete_count = cursor.fetchone()[0]
-            logger.info(f'Deleting {rows_to_delete_count} old farms.')
+            logger.info(f'Deleting {rows_to_delete_count} farms.')
 
-            cursor.execute("DELETE FROM farms WHERE farm_id NOT IN ({})".format(
+            cursor.execute("DELETE FROM farms WHERE farm_id IN ({})".format(
                 ','.join(['?'] * len(farm_ids))
             ), farm_ids)
 
