@@ -39,3 +39,13 @@ class Helpers:
         minutes_diff = round(time_diff.total_seconds() / 60)
 
         return minutes_diff
+    
+    def validate_date(date_str):
+        try:
+            # Parse the date string
+            datetime_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S.%f')
+            # If parsing succeeds, return True
+            return True
+        except ValueError:
+            # If parsing fails, return False
+            return False
