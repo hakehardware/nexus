@@ -14,7 +14,9 @@ def insert(entity):
         'farmer': database_api.insert_farmer,
         'farm': database_api.insert_farm,
         'event': database_api.insert_event,
-        'plot': database_api.insert_plot
+        'plot': database_api.insert_plot,
+        'reward': database_api.insert_reward,
+        'error': database_api.insert_error
     }
 
     # Check if the requested entity is supported
@@ -43,6 +45,7 @@ def get(entity):
         'Farmer Name': request.args.get('farmer_name', default=None, type=str),
         'Event Type': request.args.get('event_type', default=None, type=str),
         'Plot Type': request.args.get('plot_type', default=None, type=str),
+        'Farm Index': request.args.get('farm_index', default=None, type=int),
         'Start Time': request.args.get('start_datetime'),
         'End Time': request.args.get('end_datetime')
     }
@@ -51,7 +54,10 @@ def get(entity):
     get_methods = {
         'farmers': database_api.get_farmers,
         'farms': database_api.get_farms,
-        'events': database_api.get_events
+        'events': database_api.get_events,
+        'plots': database_api.get_plots,
+        'rewards': database_api.get_rewards,
+        'errors': database_api.get_errors
     }
     
     # Check if the requested entity is supported
@@ -67,7 +73,6 @@ def get(entity):
         else:
             return jsonify(response), 200
     except Exception as e:
-        logger.error(response)
         return jsonify({"error": str(e)}), 500
 
 @nexus_routes.route('/update/<entity>', methods=['POST'])

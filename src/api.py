@@ -6,6 +6,9 @@ from src.logger import logger
 from src.helpers import Helpers
 from src.constants import keys
 
+# TODO:
+# More Validation for Arguments
+
 class DatabaseAPI:
     def __init__(self, db_location):
         self.db_location = db_location
@@ -73,7 +76,7 @@ class DatabaseAPI:
                             farmer_name TEXT,
                             farm_index TEXT,
                             reward_hash TEXT,
-                            reward_result TEXT,
+                            reward_type TEXT,
                             reward_datetime DATETIME
                         )''')
         
@@ -89,7 +92,6 @@ class DatabaseAPI:
         self.disconnect()
 
     # ===== INSERT
-    # Done
     def insert_farmer(self, data):
         try:
             self.connect()
@@ -293,8 +295,6 @@ class DatabaseAPI:
             plot_type = data.get("Data", {}).get('Plot Type')
             plot_datetime = data.get('Datetime')
 
-            logger.info(data)
-
             # Validate that all data points are there
             if not all([farmer_name, farm_index, plot_percentage, plot_current_sector, plot_type, plot_datetime]):
                 logger.warn('Missing Reequired Fields')
@@ -344,6 +344,45 @@ class DatabaseAPI:
             self.connect()
             cursor = self.conn.cursor()
 
+            # Get data from reward
+            farmer_name = data.get("Farmer Name")
+            farm_index = data.get("Data", {}).get("Farm Index")
+            reward_hash = data.get("Data", {}).get("Reward Hash")
+            reward_type = data.get("Data", {}).get("Reward Type")
+            reward_datetime = data.get('Datetime')
+
+            logger.info(data)
+
+            # Validate that all data points are there
+            if not all([farmer_name, farm_index, reward_hash, reward_datetime, reward_type]):
+                logger.warn('Missing Required Fields')
+                response = {
+                    "Success": False,
+                    "Message": "Missing Required Fields"
+                }
+                return response
+            
+            # Validate that the datetime is in the correct format
+            if not Helpers.validate_date(reward_datetime):
+                logger.warn('Invalid Datetime Received')
+                response = {
+                    "Success": False,
+                    "Message": "Invalid Datetime"
+                }
+                return response
+            
+            logger.info('Validation Passed')
+
+            # Insert the event into the database
+            cursor.execute('INSERT INTO rewards (farmer_name, farm_index, reward_hash, reward_type, reward_datetime) VALUES (?, ?, ?, ?, ?)',
+                        (farmer_name, farm_index, reward_hash, reward_type, reward_datetime))
+            self.conn.commit()
+
+            response = {
+                "Success": True,
+                "Message": "Successfully inserted reward"
+            }
+
         except Exception as e:
             # Rollback the transaction if an error occurs
             logger.error(f'Error inserting event: {e}')
@@ -355,6 +394,8 @@ class DatabaseAPI:
 
         finally:
             self.disconnect()
+
+        return response
 
     def insert_error(self, data):
         try:
@@ -362,6 +403,42 @@ class DatabaseAPI:
             self.connect()
             cursor = self.conn.cursor()
 
+            # Get data from error
+            farmer_name = data.get("Farmer Name")
+            error = data.get("Data", {}).get("Error")
+            error_datetime = data.get('Datetime')
+
+            logger.info(data)
+
+            # Validate that all data points are there
+            if not all([farmer_name, error, error_datetime]):
+                logger.warn('Missing Required Fields')
+                response = {
+                    "Success": False,
+                    "Message": "Missing Required Fields"
+                }
+                return response
+            
+            # Validate that the datetime is in the correct format
+            if not Helpers.validate_date(error_datetime):
+                logger.warn('Invalid Datetime Received')
+                response = {
+                    "Success": False,
+                    "Message": "Invalid Datetime"
+                }
+                return response
+            
+            logger.info('Validation Passed')
+
+            # Insert the event into the database
+            cursor.execute('INSERT INTO errors (farmer_name, error, error_datetime) VALUES (?, ?, ?)',
+                        (farmer_name, error, error_datetime))
+            self.conn.commit()
+            response = {
+                "Success": True,
+                "Message": "Successfully inserted error"
+            }
+
         except Exception as e:
             # Rollback the transaction if an error occurs
             logger.error(f'Error inserting event: {e}')
@@ -373,6 +450,8 @@ class DatabaseAPI:
 
         finally:
             self.disconnect()
+
+        return response
 
     # ===== GET
     def get_farmers(self, data):
@@ -486,11 +565,12 @@ class DatabaseAPI:
             total_items = cursor.fetchone()[0]
 
         except Exception as e:
-            logger.error(f'Error getting farmers: {e}')
+            logger.error(f'Error getting events: {e}')
             response = {
                 "Success": False,
-                "Message": f"Error getting farmers: {e}"
+                "Message": f"Error getting events: {e}"
             }
+            return response
 
         finally:
             self.disconnect()
@@ -502,16 +582,198 @@ class DatabaseAPI:
                 "Total Items": total_items
             }
         }
+
         return response
     
     def get_plots(self, data):
-        pass
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            logger.info(data)
+
+            # Construct the SQL query
+            sql = "SELECT * FROM plots WHERE"
+
+            conditions = " plot_datetime BETWEEN ? AND ?"
+            params = [data['Start Time'], data['End Time']]
+
+            # Add optional filters if provided
+            if data.get('Farm Index'):
+                conditions += " AND farm_index = ?"
+                params.append(data['Farm Index'])
+
+            if data['Farmer Name']:
+                conditions += " AND farmer_name = ?"
+                params.append(data['Farmer Name'])
+
+            sql += conditions
+
+            # Add pagination
+            offset = (data['Page'] - 1) * data['Limit']
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([data['Limit'], offset])
+
+            logger.info(f"Executing: {sql}")
+            logger.info(params)
+
+            cursor.execute(sql, params)
+            plots = cursor.fetchall()
+
+            zippled_plots = [dict(zip(keys['Plot'], row)) for row in plots]
+
+            # Execute the count query
+            count_sql = "SELECT COUNT(*) FROM plots WHERE" + conditions
+            logger.info(f"Executing: {count_sql}")
+            cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
+            total_items = cursor.fetchone()[0]
+
+        except Exception as e:
+            logger.error(f'Error getting farmers: {e}')
+            response = {
+                "Success": False,
+                "Message": f"Error getting farmers: {e}"
+            }
+            return response
+
+        finally:
+            self.disconnect()
+
+        response = {
+            "Success": True,
+            "Data": {
+                "Plots": zippled_plots,
+                "Total Items": total_items
+            }
+        }
+        
+        return response
 
     def get_rewards(self, data):
-        pass
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            logger.info(data)
+
+            # Construct the SQL query
+            sql = "SELECT * FROM rewards WHERE"
+
+            conditions = " reward_datetime BETWEEN ? AND ?"
+            params = [data['Start Time'], data['End Time']]
+
+            # Add optional filters if provided
+            if data.get('Farm Index'):
+                conditions += " AND farm_index = ?"
+                params.append(data['Farm Index'])
+
+            if data['Farmer Name']:
+                conditions += " AND farmer_name = ?"
+                params.append(data['Farmer Name'])
+
+            sql += conditions
+
+            # Add pagination
+            offset = (data['Page'] - 1) * data['Limit']
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([data['Limit'], offset])
+
+            logger.info(f"Executing: {sql}")
+            logger.info(params)
+
+            cursor.execute(sql, params)
+            rewards = cursor.fetchall()
+
+
+            zipped_rewards = [dict(zip(keys['Reward'], row)) for row in rewards]
+
+            # Execute the count query
+            count_sql = "SELECT COUNT(*) FROM rewards WHERE" + conditions
+            logger.info(f"Executing: {count_sql}")
+            cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
+            total_items = cursor.fetchone()[0]
+
+        except Exception as e:
+            logger.error(f'Error getting rewards: {e}')
+            response = {
+                "Success": False,
+                "Message": f"Error getting rewards: {e}"
+            }
+            return response
+
+        finally:
+            self.disconnect()
+
+        response = {
+            "Success": True,
+            "Data": {
+                "Rewards": zipped_rewards,
+                "Total Items": total_items
+            }
+        }
+        
+        return response
 
     def get_errors(self, data):
-        pass
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            logger.info(data)
+
+            # Construct the SQL query
+            sql = "SELECT * FROM errors WHERE"
+
+            conditions = " error_datetime BETWEEN ? AND ?"
+            params = [data['Start Time'], data['End Time']]
+
+            # Add optional filters if provided
+            if data['Farmer Name']:
+                conditions += " AND farmer_name = ?"
+                params.append(data['Farmer Name'])
+
+            sql += conditions
+
+            # Add pagination
+            offset = (data['Page'] - 1) * data['Limit']
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([data['Limit'], offset])
+
+            logger.info(f"Executing: {sql}")
+            logger.info(params)
+
+            cursor.execute(sql, params)
+            errors = cursor.fetchall()
+
+
+            zipped_errors = [dict(zip(keys['Error'], row)) for row in errors]
+
+            # Execute the count query
+            count_sql = "SELECT COUNT(*) FROM errors WHERE" + conditions
+            logger.info(f"Executing: {count_sql}")
+            cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
+            total_items = cursor.fetchone()[0]
+
+        except Exception as e:
+            logger.error(f'Error getting errors: {e}')
+            response = {
+                "Success": False,
+                "Message": f"Error getting errors: {e}"
+            }
+            return response
+
+        finally:
+            self.disconnect()
+
+        response = {
+            "Success": True,
+            "Data": {
+                "Errors": zipped_errors,
+                "Total Items": total_items
+            }
+        }
+        
+        return response
     
     # ===== UPDATE
     def update_farmer(self, data):
@@ -963,306 +1225,3 @@ class DatabaseAPI:
             self.disconnect()
 
         return response
-    
-    
-
-
-
-
-    # FARMER
-
-    # EVENTS
-
-
-    def get_events_old(self, data):
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-            page = data['Page']
-            limit = data['Limit']
-
-            offset = (page - 1) * limit
-            cursor.execute("SELECT COUNT(*) FROM events")
-            total_items = cursor.fetchone()[0]
-
-            cursor.execute("SELECT * FROM events ORDER BY event_datetime DESC LIMIT ? OFFSET ?", (limit, offset))            
-            events = cursor.fetchall()
-
-        except Exception as e:
-            logger.error(f'Error getting events: {e}')
-            response = {
-                "Success": False,
-                "Message": f"Error getting events: {e}"
-            }
-
-        finally:
-            self.disconnect()
-
-        response = {
-            "Success": True,
-            "Data": {
-                "Events": events,
-                "Total": total_items
-            }
-        }
-        return response
-
-    # PLOTS
-    def get_plots_old(self, data):
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-
-            page = data['Page']
-            limit = data['Limit']
-            farm_index = data['Farm Index']
-
-            offset = (page - 1) * limit
-            cursor.execute("SELECT COUNT(*) FROM plots")
-            total_items = cursor.fetchone()[0]
-
-            cursor.execute("SELECT * FROM plots WHERE farm_index = ? ORDER BY plot_datetime DESC LIMIT ? OFFSET ?", (farm_index, limit, offset))
-            events = cursor.fetchall()
-
-        except Exception as e:
-            logger.error(f'Error getting plots: {e}')
-            response = {
-                "Success": False,
-                "Message": f"Error getting plots: {e}"
-            }
-        
-        finally:
-            self.disconnect()
-
-        response = {
-            "Success": True,
-            "Data": {
-                "Events": events,
-                "Total": total_items
-            }
-        }
-        return response
-
-
-    def get_farms_oldd(self, data):
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-            page = data.get('Page')
-            limit = data.get('Limit')
-            farm_index = data.get('Farm Index')
-            farmer_name = data.get('Farmer Name')
-            farm_id = data.get('Farm ID')
-
-            offset = (page - 1) * limit
-
-            # Construct the base SQL query
-            sql = "SELECT * FROM farms WHERE 1=1"
-            params = []
-
-            conditions = ""
-            # Append conditions for farm_index, farmer_name, and farm_id
-            if farm_index is not None:
-                conditions += " AND farm_index = ?"
-                params.append(farm_index)
-            if farmer_name is not None:
-                conditions += " AND farmer_name = ?"
-                params.append(farmer_name)
-            if farm_id is not None:
-                conditions += " AND farm_id = ?"
-                params.append(farm_id)
-
-            # Add ORDER BY, LIMIT, and OFFSET clauses
-            sql = sql + conditions + " ORDER BY creation_datetime DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
-
-            # Execute the main SQL query
-            logger.info(f"Executing: {sql}")
-            cursor.execute(sql, params)
-            farms = cursor.fetchall()
-
-            zipped_farms = [dict(zip(keys['Farm'], row)) for row in farms]
-            
-            # Execute the count query
-            count_sql = "SELECT COUNT(*) FROM farms WHERE 1=1" + conditions
-            logger.info(f"Executing: {count_sql}")
-            cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
-            total_items = cursor.fetchone()[0]
-
-            response = {
-                "Success": True,
-                "Data": {
-                    "Farms": zipped_farms,
-                    "Total Items": total_items
-                }
-            }
-
-
-        except Exception as e:
-            logger.error(f'Error getting farms: {e}')
-            response = {
-                "Success": False,
-                "Message": f"Error getting farms: {e}"
-            }
-
-        finally:
-            self.disconnect()
-
-        return response
-
-
-
-
-    # Unit Tests Built
-
-    # Unit Tests Built    
-    def insert_farm_old(self, data) -> bool:
-        try:
-            farm_id = data['Data']['Farm ID']
-            farm_index = data['Data']['Farm Index']
-            logger.info(f'checking to see if {farm_id} with index {farm_index} exists')
-
-            self.connect()
-            cursor = self.conn.cursor()
-
-            self.conn.execute("BEGIN TRANSACTION")
-
-
-
-            cursor.execute("SELECT * FROM farms WHERE farm_id = ? OR farm_index = ?", (farm_id, farm_index,))
-            rows = cursor.fetchall()
-
-            logger.info('match found, checking for conflicts')
-            insert = True
-            for row in rows:
-                existing_farm_id = row[0]
-                existing_farm_index = row[1]
-
-                if existing_farm_id == farm_id and existing_farm_index == farm_index:
-                    logger.info('complete match exists, no need to insert')
-                    insert = False
-                else:
-                    logger.info('conflict found, removing conflict')
-                    cursor.execute("DELETE FROM farms WHERE farm_id = ? AND farm_index = ?", (existing_farm_id, existing_farm_index))
-
-            if insert:
-                logger.info(f'inserting new farm with id of {farm_id} and index of {farm_index}')
-                current_datetime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-                cursor.execute("INSERT INTO farms (farm_id, farm_index, creation_datetime) VALUES (?, ?, ?)", (farm_id, farm_index, current_datetime))
-                        
-                    
-
-            self.conn.commit()
-
-        except Exception as e:
-            # Rollback the transaction if an error occurs
-            logger.error(f'Error: {e}')
-            self.conn.rollback()
-            return False
-
-        finally:
-            self.disconnect()
-
-        return True
-
-    # Unit Tests Built
-    def insert_reward_old(self, data) -> bool:
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-
-            farm_index = data['Data']['Farm Index']
-            hash = data['Data']['Hash']
-            result = data['Event Type']
-            reward_datetime = data['Datetime']
-
-            logger.info(f'Farm Index {farm_index}: {result}')
-            cursor.execute("""
-                INSERT INTO rewards (farm_index, reward_hash, reward_result, reward_datetime)
-                VALUES (?, ?, ?, ?)
-            """, (farm_index, hash, result, reward_datetime))
-            
-            self.conn.commit()
-
-        except Exception as e:
-            # Rollback the transaction if an error occurs
-            logger.error(f'Error: {e}')
-            self.conn.rollback()
-            return False
-        
-        finally:
-            self.disconnect()
-
-        return True
-    
-    # Unit Tests Built
-    def insert_plot_old(self, data) -> bool:
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-
-            farm_index = data['Data']['Farm Index']
-            percentage_complete = data['Data']['Percentage Complete']
-            current_sector = data['Data']['Current Sector']
-            replot = data['Data']['Replot']
-            plot_datetime = data['Datetime']
-
-            logger.info(f'Farm Index {farm_index}:  {data["Event Type"]} {current_sector} @ {percentage_complete}% Complete')
-            cursor.execute("""
-                INSERT INTO plots (farm_index, percentage, current_sector, replot, plot_datetime)
-                VALUES (?, ?, ?, ?, ?)
-                """, (
-                    farm_index,
-                    percentage_complete, 
-                    current_sector,
-                    replot,
-                    plot_datetime                
-                ))
-
-            self.conn.commit()
-
-        except Exception as e:
-            # Rollback the transaction if an error occurs
-            logger.error(f'Error: {e}')
-            self.conn.rollback()
-            return False
-        
-        
-        finally:
-            self.disconnect()
-
-        return True
-    
-    # Unit Tests Built
-    def insert_error_old(self, data) -> bool:
-        try:
-            self.connect()
-            cursor = self.conn.cursor()
-
-            error = data['Data']['Error']
-            error_datetime = data['Datetime']
-
-            logger.info(f'inserting error: {error}')
-            cursor.execute("""
-                INSERT INTO errors (error_text, error_datetime)
-                VALUES (?, ?)
-                """, (
-                    error,
-                    error_datetime                
-                ))
-
-            self.conn.commit()
-
-        except Exception as e:
-            # Rollback the transaction if an error occurs
-            logger.error(f'Error: {e}')
-            self.conn.rollback()
-            return False
-        
-        
-        finally:
-            self.disconnect()
-
-        return True
-
-
