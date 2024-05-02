@@ -376,10 +376,10 @@ class DatabaseAPI:
                 missing.append('Farmer Name')
             if farm_index == None:
                 missing.append('Farm Index')
-            if reward_hash == None:
-                missing.append('Reward Hash')
             if reward_type == None:
                 missing.append('Reward Type')
+            if reward_hash == None and reward_type == 'Reward':
+                missing.append('Reward Hash')
             if reward_datetime == None:
                 missing.append('Datetime')
 
