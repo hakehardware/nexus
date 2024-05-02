@@ -149,11 +149,12 @@ class DatabaseAPI:
 
     def insert_farm(self, data):
         try:
-            farm_id = data['Data']['Farm ID']
-            farm_index = data['Data']['Farm Index']
-            farmer_name = data['Data']['Farmer Name']
+            farm_id = data.get('Data', {}).get('Farm ID')
+            farm_index = data.get('Data', {}).get('Farm Index')
+            farm_status = data.get('Data', {}).get('Farm Status')
+            farmer_name = data.get('Farmer Name')
 
-            if not farm_id or not farm_index or not farmer_name:
+            if farm_id == None or farm_index == None or farmer_name == None:
                 message = "Farm ID, Farmer Name, and Farm Index is required"
                 logger.warn(message)
                 return {
@@ -186,10 +187,10 @@ class DatabaseAPI:
 
             if insert:
                 current_datetime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-                cursor.execute("INSERT INTO farms (farm_id, farm_index, farmer_name, creation_datetime) VALUES (?, ?, ?, ?)", (farm_id, farm_index, farmer_name, current_datetime))
+                cursor.execute("INSERT INTO farms (farm_id, farm_index, farmer_name, farm_status, creation_datetime) VALUES (?, ?, ?, ?, ?)", (farm_id, farm_index, farmer_name, farm_status, current_datetime))
                 self.conn.commit()
 
-                message = f"Inserted new farm with id of {farm_id}, farmer_name of {farmer_name}, and index of {farm_index}"
+                message = f"Inserted new farm with id of {farm_id}, farmer_name of {farmer_name}, farm_status of {farm_status} and index of {farm_index}"
                 logger.info(message)
 
                 response = {
@@ -230,7 +231,8 @@ class DatabaseAPI:
                 logger.warn('Missing Farmer Name Event Datetime, Event Type, or Event Data')
                 response = {
                     "Success": False,
-                    "Message": "Missing Farmer Name Event Datetime, Event Type, or Event Data"
+                    "Message": "Missing Farmer Name Event Datetime, Event Type, or Event Data",
+                    "Inserted Event": False
                 }
                 return response
             
@@ -239,7 +241,8 @@ class DatabaseAPI:
                 logger.warn('Invalid Datetime Received')
                 response = {
                     "Success": False,
-                    "Message": "Invalid Datetime"
+                    "Message": "Invalid Datetime",
+                    "Inserted Event": False
                 }
                 return response
             
@@ -258,13 +261,15 @@ class DatabaseAPI:
                 self.conn.commit()
                 response = {
                     "Success": True,
-                    "Message": "Successfully inserted event"
+                    "Message": "Successfully inserted event",
+                    "Inserted Event": True
                 }
 
             else:
                 response = {
                     "Success": True,
-                    "Message": "Event already exists"
+                    "Message": "Event already exists",
+                    "Inserted Event": False
                 }
 
             return response
@@ -275,7 +280,8 @@ class DatabaseAPI:
             self.conn.rollback()
             response = {
                 "Success": False,
-                'Message': f'Error inserting event: {e}'
+                'Message': f'Error inserting event: {e}',
+                "Inserted Event": False
             }
 
         finally:
@@ -295,12 +301,25 @@ class DatabaseAPI:
             plot_type = data.get("Data", {}).get('Plot Type')
             plot_datetime = data.get('Datetime')
 
-            # Validate that all data points are there
-            if not all([farmer_name, farm_index, plot_percentage, plot_current_sector, plot_type, plot_datetime]):
-                logger.warn('Missing Reequired Fields')
+            missing = []
+            if farmer_name == None:
+                missing.append('Farmer Name')
+            if farm_index == None:
+                missing.append('Farm Index')
+            if plot_percentage == None:
+                missing.append('Plot Percentage')
+            if plot_current_sector == None and plot_percentage != 100.0:
+                missing.append('Plot Current Sector')
+            if plot_type == None:
+                missing.append('Plot Type')
+            if plot_datetime == None:
+                missing.append('Datetime')
+
+            if len(missing) > 0:
+                logger.warn('Missing Required Fields')
                 response = {
                     "Success": False,
-                    "Message": "Missing Reequired Fields"
+                    "Message": f"Missing {' and '.join(missing)}"
                 }
                 return response
             
@@ -351,14 +370,24 @@ class DatabaseAPI:
             reward_type = data.get("Data", {}).get("Reward Type")
             reward_datetime = data.get('Datetime')
 
-            logger.info(data)
 
-            # Validate that all data points are there
-            if not all([farmer_name, farm_index, reward_hash, reward_datetime, reward_type]):
+            missing = []
+            if farmer_name == None:
+                missing.append('Farmer Name')
+            if farm_index == None:
+                missing.append('Farm Index')
+            if reward_hash == None:
+                missing.append('Reward Hash')
+            if reward_type == None:
+                missing.append('Reward Type')
+            if reward_datetime == None:
+                missing.append('Datetime')
+
+            if len(missing) > 0:
                 logger.warn('Missing Required Fields')
                 response = {
                     "Success": False,
-                    "Message": "Missing Required Fields"
+                    "Message": f"Missing {' and '.join(missing)}"
                 }
                 return response
             
@@ -547,7 +576,7 @@ class DatabaseAPI:
 
             # Add pagination
             offset = (data['Page'] - 1) * data['Limit']
-            sql += " LIMIT ? OFFSET ?"
+            sql += " ORDER BY event_datetime DESC LIMIT ? OFFSET ?"
             params.extend([data['Limit'], offset])
 
             logger.info(f"Executing: {sql}")
@@ -782,9 +811,9 @@ class DatabaseAPI:
             cursor = self.conn.cursor()
 
             farmer_name = data.get('Farmer Name')
-            farmer_piece_cache_status = data.get('Farmer Piece Cache Status')
-            farmer_piece_cache_percent = data.get('Farmer Piece Cache Percent')
-            farmer_workers = data.get('Farmer Workers')
+            farmer_piece_cache_status = data.get('Data', {}).get('Farmer Piece Cache Status')
+            farmer_piece_cache_percent = data.get('Data', {}).get('Farmer Piece Cache Percent')
+            farmer_workers = data.get('Data', {}).get('Farmer Workers')
 
             if not farmer_name:
                 logger.warn("Farmer Name is required")
@@ -863,12 +892,12 @@ class DatabaseAPI:
             self.connect()
             cursor = self.conn.cursor()
 
-            farm_id = data.get('Farm ID')
-            farmer_name = data.get('Farmer Name')
-            farm_index = data.get('Farm Index')
 
-            if not all([farm_id, farmer_name, farm_index]):
-                message = "Farm ID, Farmer Name, and Farm Index are all required"
+            farmer_name = data.get('Farmer Name')
+            farm_index = data.get('Data', {}).get('Farm Index')
+
+            if farmer_name == None or farm_index == None:
+                message = "Farmer Name and Farm Index are required"
                 logger.warn(message)
                 response = {
                     'Success': False,
@@ -877,10 +906,10 @@ class DatabaseAPI:
                 return response
             
 
-            farm_public_key = data.get('Farm Public Key')
-            farm_allocated_space_gib = data.get('Farm Allocated Space GiB')
-            farm_directory = data.get('Farm Directory')
-            farm_status = data.get('Farm Status')
+            farm_public_key = data.get('Data', {}).get('Farm Public Key')
+            farm_allocated_space_gib = data.get('Data', {}).get('Farm Allocated Space')
+            farm_directory = data.get('Data', {}).get('Farm Directory')
+            farm_status = data.get('Data', {}).get('Farm Status')
 
 
             # Construct the SQL update query
@@ -902,15 +931,17 @@ class DatabaseAPI:
             if farm_status is not None:
                 sql += "farm_status = ?, "
                 params.append(farm_status)
+            logger.info(sql)
 
             # Remove the trailing comma and space
             sql = sql.rstrip(', ')
 
             # Add the WHERE clause for the farmer_name
-            sql += " WHERE farmer_name = ? AND farm_id = ? AND farm_index = ?"
-            params.extend([farmer_name, farm_id, farm_index])
+            sql += " WHERE farmer_name = ? AND farm_index = ?"
+            params.extend([farmer_name, farm_index])
 
             # Execute the SQL query
+            logger.info(sql)
             cursor.execute(sql, params)
             rowcount = cursor.rowcount
 

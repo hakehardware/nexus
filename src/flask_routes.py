@@ -80,6 +80,7 @@ def update(entity):
     database_api = current_app.config['database_api']
     data = request.json
 
+
     logger.info(f"Updating {entity}")
     # Map entity names to corresponding update methods
     update_methods = {
@@ -142,7 +143,11 @@ def delete_all(entity):
     # Map entity names to corresponding delete methods
     delete_methods = {
         'farmers': database_api.delete_all_farmers,
-        'farms': database_api.delete_all_farms
+        'farms': database_api.delete_all_farms,
+        'events': database_api.delete_all_events,
+        'plots': database_api.delete_all_plots,
+        'rewards': database_api.delete_all_rewards,
+        'errors': database_api.delete_all_errors
     }
 
     # Check if the requested entity is supported
