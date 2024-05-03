@@ -12,11 +12,15 @@ def insert(entity):
     # Map entity names to corresponding insert methods
     insert_methods = {
         'farmer': database_api.insert_farmer,
+        'node': database_api.insert_node,
         'farm': database_api.insert_farm,
-        'event': database_api.insert_event,
+        'farmer_event': database_api.insert_farmer_event,
+        'node_event': database_api.insert_node_event,
         'plot': database_api.insert_plot,
         'reward': database_api.insert_reward,
-        'error': database_api.insert_error
+        'error': database_api.insert_error,
+        'claim': database_api.insert_claim,
+        'consensus': database_api.insert_consensus
     }
 
     # Check if the requested entity is supported
@@ -43,6 +47,7 @@ def get(entity):
         'Page': request.args.get('page', default=1, type=int),
         'Limit': request.args.get('limit', default=10, type=int),
         'Farmer Name': request.args.get('farmer_name', default=None, type=str),
+        'Node Name': request.args.get('node_name', default=None, type=str),
         'Event Type': request.args.get('event_type', default=None, type=str),
         'Plot Type': request.args.get('plot_type', default=None, type=str),
         'Farm Index': request.args.get('farm_index', default=None, type=int),
@@ -53,8 +58,10 @@ def get(entity):
     # Map entity names to corresponding insert methods
     get_methods = {
         'farmers': database_api.get_farmers,
+        'node': database_api.get_nodes,
         'farms': database_api.get_farms,
-        'events': database_api.get_events,
+        'farmer_events': database_api.get_farmer_events,
+        'node_events': database_api.get_node_events,
         'plots': database_api.get_plots,
         'rewards': database_api.get_rewards,
         'errors': database_api.get_errors
@@ -85,6 +92,7 @@ def update(entity):
     # Map entity names to corresponding update methods
     update_methods = {
         'farmer': database_api.update_farmer,
+        'node': database_api.update_node,
         'farm': database_api.update_farm
     }
 
@@ -114,6 +122,7 @@ def delete(entity):
     # Map entity names to corresponding insert methods
     insert_methods = {
         'farmer': database_api.delete_farmer,
+        'node': database_api.delete_node,
         'farm': database_api.delete_farm
     }
 
@@ -143,11 +152,15 @@ def delete_all(entity):
     # Map entity names to corresponding delete methods
     delete_methods = {
         'farmers': database_api.delete_all_farmers,
+        'nodes': database_api.delete_all_nodes,
         'farms': database_api.delete_all_farms,
-        'events': database_api.delete_all_events,
+        'farmer_events': database_api.delete_all_farmer_events,
+        'node_events': database_api.delete_all_node_events,
         'plots': database_api.delete_all_plots,
         'rewards': database_api.delete_all_rewards,
-        'errors': database_api.delete_all_errors
+        'errors': database_api.delete_all_errors,
+        'claims': database_api.delete_all_claims,
+        'consensus': database_api.delete_all_consensus
     }
 
     # Check if the requested entity is supported

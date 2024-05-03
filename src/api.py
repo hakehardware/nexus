@@ -38,6 +38,13 @@ class DatabaseAPI:
                             creation_datetime DATETIME
                         )''')
         
+        logger.info('initializing "nodes" Table')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS nodes (
+                            node_name TEXT,
+                            node_status TEXT,
+                            creation_datetime DATETIME
+                        )''')
+        
         logger.info('initializing "farms" Table')
         cursor.execute('''CREATE TABLE IF NOT EXISTS farms (
                             farm_id TEXT,
@@ -50,15 +57,24 @@ class DatabaseAPI:
                             creation_datetime DATETIME
                         )''')
         
-        logger.info('initializing "events" Table')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS events (
+        logger.info('initializing "farmer_events" Table')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS farmer_events (
                             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                             farmer_name TEXT,
                             event_type TEXT,
                             event_data TEXT,
                             event_datetime DATETIME
                         )''')
-    
+        
+        logger.info('initializing "node_events" Table')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS node_events (
+                            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            node_name TEXT,
+                            event_type TEXT,
+                            event_data TEXT,
+                            event_datetime DATETIME
+                        )''')
+        
         logger.info('Initializing "plots" Table')
         cursor.execute('''CREATE TABLE IF NOT EXISTS plots (
                             plot_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +103,33 @@ class DatabaseAPI:
                             error TEXT,
                             error_datetime DATETIME
                         )''')
-
+        
+        logger.info('Initializing "claims" Table')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS claims (
+                            claim_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            node_name TEXT,
+                            slot INT,
+                            claim_type TEXT,
+                            claim_datetime DATETIME
+                        )''')
+        # best: Current Block
+        # target: Highest Block
+        # When synced best=target
+        logger.info('Initializing "consensus" Table')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS consensus (
+                            consensus_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            node_name TEXT,
+                            status TEXT,
+                            peers INT,
+                            best INT,
+                            target INT,
+                            finalized INT,
+                            bps INT,
+                            down_speed_kib REAL,
+                            up_speed_kib REAL,
+                            consensus_datetime DATETIME
+                        )''')
+        
         self.conn.commit()
         self.disconnect()
 
@@ -96,6 +138,7 @@ class DatabaseAPI:
         try:
             self.connect()
             cursor = self.conn.cursor()
+            logger.info(f"Data: {data}")
 
             farmer_name = data.get('Farmer Name')
 
@@ -140,6 +183,61 @@ class DatabaseAPI:
             response = {
                 "Success": False,
                 'Message': f'Error inserting farmer: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+
+    def insert_node(self, data):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+            logger.info(f"Data: {data}")
+
+            node_name = data.get('Node Name')
+            node_status = data.get('Node Status')
+
+            if not node_name:
+                logger.warn('No Node Name Provided')
+                response = {
+                    'Success': False,
+                    'Message': 'No Node Name Provided'
+                }
+                return response
+
+            self.conn.execute("BEGIN TRANSACTION")
+
+            # Check if a row with the given node_name already exists
+            cursor.execute("SELECT COUNT(*) FROM nodes WHERE node_name = ?", (node_name,))
+            row_count = cursor.fetchone()[0]
+
+            if row_count == 0:
+                # Add a new row with the node_name
+                current_datetime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+                cursor.execute("INSERT INTO nodes (node_name, node_status, creation_datetime) VALUES (?, ?, ?)", (node_name, node_status, current_datetime))
+                logger.info(f"{node_name} added to database")
+                response = {
+                    'Success': True,
+                    'Message': f"{node_name} Added to Database"
+                }
+                self.conn.commit()
+
+            else:
+                logger.info(f'Node {node_name} exists, no changes needed')
+                response = {
+                    'Success': True,
+                    'Message': f"Node {node_name} exists, no changes needed"
+                }
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error inserting node: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error inserting node: {e}'
             }
 
         finally:
@@ -211,8 +309,8 @@ class DatabaseAPI:
             self.disconnect()
 
         return response
-    
-    def insert_event(self, data):
+
+    def insert_farmer_event(self, data):
         try:
             # Connect to DB
             self.connect()
@@ -224,15 +322,22 @@ class DatabaseAPI:
             event_data = data.get("Data")
             farmer_name = data.get('Farmer Name')
 
-            logger.info(data)
+            missing = []
+            if farmer_name == None:
+                missing.append('Farmer Name')
+            if event_datetime == None:
+                missing.append('Event Datetime')
+            if event_type == None:
+                missing.append('Event Type')
+            if event_data == None:
+                missing.append('Event Data')
 
-            # Validate that all data points are there
-            if not all([event_datetime, event_type, event_data, farmer_name]):
-                logger.warn('Missing Farmer Name Event Datetime, Event Type, or Event Data')
+
+            if len(missing) > 0:
+                logger.warn('Missing Required Fields')
                 response = {
                     "Success": False,
-                    "Message": "Missing Farmer Name Event Datetime, Event Type, or Event Data",
-                    "Inserted Event": False
+                    "Message": f"Missing {' and '.join(missing)}"
                 }
                 return response
             
@@ -250,18 +355,18 @@ class DatabaseAPI:
             logger.info('Validation Passed')
 
             # Check if the event already exists
-            cursor.execute('SELECT COUNT(*) FROM events WHERE event_datetime = ? AND event_type = ? AND event_data = ? AND farmer_name = ?',
+            cursor.execute('SELECT COUNT(*) FROM farmer_events WHERE event_datetime = ? AND event_type = ? AND event_data = ? AND farmer_name = ?',
                         (event_datetime, event_type, json.dumps(event_data), farmer_name))
             exists = cursor.fetchone()[0] > 0
 
             if not exists:
                 # Insert the event into the database
-                cursor.execute('INSERT INTO Events (event_datetime, event_type, event_data, farmer_name) VALUES (?, ?, ?, ?)',
+                cursor.execute('INSERT INTO farmer_events (event_datetime, event_type, event_data, farmer_name) VALUES (?, ?, ?, ?)',
                             (event_datetime, event_type, json.dumps(event_data), farmer_name))
                 self.conn.commit()
                 response = {
                     "Success": True,
-                    "Message": "Successfully inserted event",
+                    "Message": "Successfully inserted farmer event",
                     "Inserted Event": True
                 }
 
@@ -276,11 +381,93 @@ class DatabaseAPI:
                 
         except Exception as e:
             # Rollback the transaction if an error occurs
-            logger.error(f'Error inserting event: {e}')
+            logger.error(f'Error inserting farmer event: {e}')
             self.conn.rollback()
             response = {
                 "Success": False,
-                'Message': f'Error inserting event: {e}',
+                'Message': f'Error inserting farmer event: {e}',
+                "Inserted Event": False
+            }
+
+        finally:
+            self.disconnect()
+
+    def insert_node_event(self, data):
+        try:
+            # Connect to DB
+            self.connect()
+            cursor = self.conn.cursor()
+
+            # Get data from event
+            event_datetime = data.get("Datetime")
+            event_type = data.get("Event Type")
+            event_data = data.get("Data")
+            node_name = data.get('Node Name')
+
+            missing = []
+            if node_name == None:
+                missing.append('Node Name')
+            if event_datetime == None:
+                missing.append('Event Datetime')
+            if event_type == None:
+                missing.append('Event Type')
+            if event_data == None:
+                missing.append('Event Data')
+
+
+            if len(missing) > 0:
+                logger.warn('Missing Required Fields')
+                response = {
+                    "Success": False,
+                    "Message": f"Missing {' and '.join(missing)}"
+                }
+                return response
+            
+            # Validate that the datetime is in the correct format
+            if not Helpers.validate_date(event_datetime):
+                logger.warn('Invalid Datetime Received')
+                response = {
+                    "Success": False,
+                    "Message": "Invalid Datetime",
+                    "Inserted Event": False
+                }
+                return response
+            
+
+            logger.info('Validation Passed')
+
+            # Check if the event already exists
+            cursor.execute('SELECT COUNT(*) FROM node_events WHERE event_datetime = ? AND event_type = ? AND event_data = ? AND node_name = ?',
+                        (event_datetime, event_type, json.dumps(event_data), node_name))
+            exists = cursor.fetchone()[0] > 0
+
+            if not exists:
+                # Insert the event into the database
+                cursor.execute('INSERT INTO node_events (event_datetime, event_type, event_data, node_name) VALUES (?, ?, ?, ?)',
+                            (event_datetime, event_type, json.dumps(event_data), node_name))
+                self.conn.commit()
+                response = {
+                    "Success": True,
+                    "Message": "Successfully inserted node event",
+                    "Inserted Event": True
+                }
+
+            else:
+                response = {
+                    "Success": True,
+                    "Message": "Event already exists",
+                    "Inserted Event": False
+                }
+
+            return response
+        
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error inserting node event: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error inserting node event: {e}',
                 "Inserted Event": False
             }
 
@@ -482,6 +669,158 @@ class DatabaseAPI:
 
         return response
 
+    def insert_claim(self, data):
+        try:
+            # Connect to DB
+            self.connect()
+            cursor = self.conn.cursor()
+
+            # Get data from error
+            node_name = data.get("Node Name")
+            slot = data.get('Data').get('Slot')
+            claim_type = data.get('Data').get('Claim Type')
+            claim_datetime = data.get('Datetime')
+
+            missing = []
+            if node_name == None:
+                missing.append('Node Name')
+            if slot == None:
+                missing.append('Slot')
+            if claim_type == None:
+                missing.append('Claim Type')
+
+            if len(missing) > 0:
+                logger.warn('Missing Required Fields')
+                response = {
+                    "Success": False,
+                    "Message": f"Missing {' and '.join(missing)}"
+                }
+                return response
+            
+            # Validate that the datetime is in the correct format
+            if not Helpers.validate_date(claim_datetime):
+                logger.warn('Invalid Datetime Received')
+                response = {
+                    "Success": False,
+                    "Message": "Invalid Datetime"
+                }
+                return response
+            
+            logger.info('Validation Passed')
+
+            # Insert the claim into the database
+            cursor.execute('INSERT INTO claims (node_name, slot, claim_type, claim_datetime) VALUES (?, ?, ?, ?)',
+                        (node_name, slot, claim_type, claim_datetime))
+            self.conn.commit()
+            response = {
+                "Success": True,
+                "Message": "Successfully inserted claim"
+            }
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error inserting claim: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error inserting claim: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+
+    def insert_consensus(self, data):
+        try:
+            # Connect to DB
+            self.connect()
+            cursor = self.conn.cursor()
+
+            # Get data from error
+            node_name = data.get("Node Name")
+            status = data.get('Data').get('Status')
+            peers = data.get('Data').get('Peers')
+            best = data.get('Data').get('Best')
+            target = data.get('Data').get('Target')
+            finalized = data.get('Data').get('Finalized')
+            bps = data.get('Data').get('BPS')
+            down_speed_kib = data.get('Data').get('Down Speed')
+            up_speed_kib = data.get('Data').get('Up Speed')
+            consensus_datetime = data.get('Datetime')
+
+            missing = []
+            if node_name == None:
+                missing.append('Node Name')
+            if status == None:
+                missing.append('Status')
+            if peers == None:
+                missing.append('Peers')
+            if consensus_datetime == None:
+                missing.append('Datetime')
+            if best == None:
+                missing.append('Best')
+            if finalized == None:
+                missing.append('Finalized')
+            if up_speed_kib == None:
+                missing.append('Up Speed')
+            if down_speed_kib == None:
+                missing.append('Down Speed')
+
+            if len(missing) > 0:
+                logger.warn('Missing Required Fields')
+                response = {
+                    "Success": False,
+                    "Message": f"Missing {' and '.join(missing)}"
+                }
+                return response
+            
+            # Validate that the datetime is in the correct format
+            if not Helpers.validate_date(consensus_datetime):
+                logger.warn('Invalid Datetime Received')
+                response = {
+                    "Success": False,
+                    "Message": "Invalid Datetime"
+                }
+                return response
+            
+            logger.info('Consensus Validation Passed')
+
+            # Build the SQL query string
+            sql_query = 'INSERT INTO consensus (node_name, status, peers, best, finalized, down_speed_kib, up_speed_kib, consensus_datetime'
+            sql_values = (node_name, status, peers, best, finalized, down_speed_kib, up_speed_kib, consensus_datetime)
+
+            if target is not None:
+                sql_query += ', target'
+                sql_values += (target,)
+            if bps is not None:
+                sql_query += ', bps'
+                sql_values += (bps,)
+
+            sql_query += ') VALUES (' + ','.join(['?'] * len(sql_values)) + ')'
+
+            # Insert the data into the database
+            cursor.execute(sql_query, sql_values)
+            self.conn.commit()
+            response = {
+                "Success": True,
+                "Message": "Successfully inserted consensus"
+            }
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error inserting claim: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error inserting claim: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+    
     # ===== GET
     def get_farmers(self, data):
         try:
@@ -553,13 +892,13 @@ class DatabaseAPI:
         }
         return response
     
-    def get_events(self, data):
+    def get_farmer_events(self, data):
         try:
             self.connect()
             cursor = self.conn.cursor()
 
             # Construct the SQL query
-            sql = "SELECT * FROM events WHERE"
+            sql = "SELECT * FROM farmer_events WHERE"
 
             conditions = " event_datetime BETWEEN ? AND ?"
             params = [data['Start Time'], data['End Time']]
@@ -585,19 +924,19 @@ class DatabaseAPI:
             cursor.execute(sql, params)
             events = cursor.fetchall()
 
-            zipped_events = [dict(zip(keys['Event'], row)) for row in events]
+            zipped_events = [dict(zip(keys['Farm Event'], row)) for row in events]
 
             # Execute the count query
-            count_sql = "SELECT COUNT(*) FROM events WHERE" + conditions
+            count_sql = "SELECT COUNT(*) FROM farmer_events WHERE" + conditions
             logger.info(f"Executing: {count_sql}")
             cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
             total_items = cursor.fetchone()[0]
 
         except Exception as e:
-            logger.error(f'Error getting events: {e}')
+            logger.error(f'Error getting farmer events: {e}')
             response = {
                 "Success": False,
-                "Message": f"Error getting events: {e}"
+                "Message": f"Error getting farmer events: {e}"
             }
             return response
 
@@ -614,6 +953,67 @@ class DatabaseAPI:
 
         return response
     
+    def get_node_events(self, data):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            # Construct the SQL query
+            sql = "SELECT * FROM node_events WHERE"
+
+            conditions = " event_datetime BETWEEN ? AND ?"
+            params = [data['Start Time'], data['End Time']]
+
+            # Add optional filters if provided
+            if data['Event Type']:
+                conditions += " AND event_type = ?"
+                params.append(data['Event Type'])
+            if data['Node Name']:
+                conditions += " AND node_name = ?"
+                params.append(data['Node Name'])
+
+            sql += conditions
+
+            # Add pagination
+            offset = (data['Page'] - 1) * data['Limit']
+            sql += " ORDER BY event_datetime DESC LIMIT ? OFFSET ?"
+            params.extend([data['Limit'], offset])
+
+            logger.info(f"Executing: {sql}")
+            logger.info(params)
+
+            cursor.execute(sql, params)
+            events = cursor.fetchall()
+
+            zipped_events = [dict(zip(keys['Node Event'], row)) for row in events]
+
+            # Execute the count query
+            count_sql = "SELECT COUNT(*) FROM node_events WHERE" + conditions
+            logger.info(f"Executing: {count_sql}")
+            cursor.execute(count_sql, params[:-2])  # Exclude LIMIT and OFFSET
+            total_items = cursor.fetchone()[0]
+
+        except Exception as e:
+            logger.error(f'Error getting node events: {e}')
+            response = {
+                "Success": False,
+                "Message": f"Error getting node events: {e}"
+            }
+            return response
+
+        finally:
+            self.disconnect()
+
+        response = {
+            "Success": True,
+            "Data": {
+                "Events": zipped_events,
+                "Total Items": total_items
+            }
+        }
+
+        return response
+
     def get_plots(self, data):
         try:
             self.connect()
@@ -887,6 +1287,78 @@ class DatabaseAPI:
 
         return response
     
+    def update_node(self, data):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            node_name = data.get('Node Name')
+            node_status = data.get('Data', {}).get('Node Status')
+
+            if not node_name:
+                logger.warn("Node Name is required")
+                response = {
+                    'Success': False,
+                    'Message': "Node Name is required"
+                }
+                return response
+            
+            if node_status is None:
+                logger.info("No new data provided. No changes made")
+                response = {
+                    'Success': True,
+                    'Message': "No new data provided. No changes made"
+                }
+                return response
+            
+            # Construct the SQL update query
+            sql = "UPDATE farmers SET "
+            params = []
+
+            if node_status is not None:
+                sql += "node_status = ?, "
+                params.append(node_status)
+
+            # Remove the trailing comma and space
+            sql = sql.rstrip(', ')
+
+            # Add the WHERE clause for the node_name
+            sql += " WHERE node_name = ?"
+            params.append(node_name)
+
+            # Execute the SQL query
+            cursor.execute(sql, params)
+            rowcount = cursor.rowcount
+
+            if rowcount > 0:
+                self.conn.commit()
+                logger.info(f"Node {node_name} updated")
+                response = {
+                    'Success': True,
+                    'Message': f"Node {node_name} updated"
+                }
+            else:
+                logger.info("No matching rows. No changes made.")
+                response = {
+                    'Success': True,
+                    'Message': f"No matching rows. No changes made."
+                }
+
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error updating node: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error updating node: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+
     def update_farm(self, data):
         try:
             self.connect()
@@ -1010,11 +1482,11 @@ class DatabaseAPI:
 
         except Exception as e:
             # Rollback the transaction if an error occurs
-            logger.error(f'Error updating farmer: {e}')
+            logger.error(f'Error deleting farmer: {e}')
             self.conn.rollback()
             response = {
                 "Success": False,
-                'Message': f'Error updating farmer: {e}'
+                'Message': f'Error deleting farmer: {e}'
             }
 
         finally:
@@ -1022,6 +1494,54 @@ class DatabaseAPI:
 
         return response
     
+    def delete_node(self, data):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            node_name = data.get('Node Name')
+
+            if not node_name:
+                logger.warn("Node Name is required")
+                response = {
+                    'Success': False,
+                    'Message': "Node Name is required"
+                }
+                return response
+                
+
+            cursor.execute("DELETE FROM nodes WHERE node_name = ?", (node_name,))
+            rowcount = cursor.rowcount
+
+            if rowcount == 0:
+                logger.info("No matching rows. No changes made.")
+                response = {
+                    "Success": True,
+                    'Message': "No matching rows. No changes made."
+                }
+
+            else:
+                self.conn.commit()
+                logger.info(f"{node_name} Deleted")
+                response = {
+                    'Success': True,
+                    'Message': f"{node_name} Deleted"
+                }
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error deleting node: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error deleting node: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+
     def delete_farm(self, data):
         try:
             self.connect()
@@ -1106,6 +1626,37 @@ class DatabaseAPI:
             self.disconnect()
 
         return response
+    
+    def delete_all_nodes(self):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            cursor.execute("DELETE FROM nodes")
+            rowcount = cursor.rowcount
+
+            response = {
+                'Success': True,
+                'Data': {
+                    'Deleted Rows': rowcount
+                }
+            }
+
+            self.conn.commit()
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error deleting all nodes: {e}')
+            self.conn.rollback()
+            response = {
+                "Success": False,
+                'Message': f'Error deleting all nodes: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
 
     def delete_all_farms(self):
         try:
@@ -1137,12 +1688,12 @@ class DatabaseAPI:
 
         return response
 
-    def delete_all_events(self):
+    def delete_all_farmer_events(self):
         try:
             self.connect()
             cursor = self.conn.cursor()
 
-            cursor.execute("DELETE FROM events")
+            cursor.execute("DELETE FROM farmer_events")
             rowcount = cursor.rowcount
 
             response = {
@@ -1156,10 +1707,40 @@ class DatabaseAPI:
 
         except Exception as e:
             # Rollback the transaction if an error occurs
-            logger.error(f'Error deleting all events: {e}')
+            logger.error(f'Error deleting all farmer events: {e}')
             self.conn.rollback()
             response = {
-                'error': f'Error deleting all events: {e}'
+                'error': f'Error deleting all farmer events: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+    
+    def delete_all_node_events(self):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            cursor.execute("DELETE FROM node_events")
+            rowcount = cursor.rowcount
+
+            response = {
+                'Success': True,
+                'Data': {
+                    'Deleted Rows': rowcount
+                }
+            }
+
+            self.conn.commit()
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error deleting all node events: {e}')
+            self.conn.rollback()
+            response = {
+                'error': f'Error deleting all node events: {e}'
             }
 
         finally:
@@ -1250,6 +1831,66 @@ class DatabaseAPI:
             self.conn.rollback()
             response = {
                 'error': f'Error deleting all errors: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+    
+    def delete_all_claims(self):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            cursor.execute("DELETE FROM claims")
+            rowcount = cursor.rowcount
+
+            response = {
+                'Success': True,
+                'Data': {
+                    'Deleted Rows': rowcount
+                }
+            }
+
+            self.conn.commit()
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error deleting all claims: {e}')
+            self.conn.rollback()
+            response = {
+                'error': f'Error deleting all claims: {e}'
+            }
+
+        finally:
+            self.disconnect()
+
+        return response
+    
+    def delete_all_consensus(self):
+        try:
+            self.connect()
+            cursor = self.conn.cursor()
+
+            cursor.execute("DELETE FROM consensus")
+            rowcount = cursor.rowcount
+
+            response = {
+                'Success': True,
+                'Data': {
+                    'Deleted Rows': rowcount
+                }
+            }
+
+            self.conn.commit()
+
+        except Exception as e:
+            # Rollback the transaction if an error occurs
+            logger.error(f'Error deleting all consensus: {e}')
+            self.conn.rollback()
+            response = {
+                'error': f'Error deleting all consensus: {e}'
             }
 
         finally:
