@@ -2,6 +2,7 @@ from flask import Flask
 from src.flask_routes import nexus_routes
 from src.api import DatabaseAPI
 from src.logger import logger
+import src.constants as constants
 
 app = Flask(__name__)
 
@@ -12,7 +13,9 @@ class Nexus:
         self.database_api = DatabaseAPI(self.config["database_location"] + 'nexus.db')
 
     def run(self) -> None:
-        logger.info('Initializing Cosmos DB')
+        logger.info(f'Initializing Nexus {constants.VERSIONS["nexus"]}.')
+
+        logger.info('Initializing Nexus DB')
         self.database_api.initialize()
 
         app.config['database_api'] = self.database_api

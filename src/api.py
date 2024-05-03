@@ -857,6 +857,8 @@ class DatabaseAPI:
         }
         return response
     
+    #TODO: Get Nodes
+
     def get_farms(self, data):
         try:
             self.connect()
@@ -1203,6 +1205,10 @@ class DatabaseAPI:
         }
         
         return response
+    
+    #TODO: Get Claims
+
+    #TODO: Get Consensus
     
     # ===== UPDATE
     def update_farmer(self, data):

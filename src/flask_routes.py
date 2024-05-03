@@ -65,6 +65,8 @@ def get(entity):
         'plots': database_api.get_plots,
         'rewards': database_api.get_rewards,
         'errors': database_api.get_errors
+        #TODO: get_claims
+        #TODO: get_consensus
     }
     
     # Check if the requested entity is supported
